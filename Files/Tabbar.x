@@ -108,7 +108,7 @@ static YTIPivotBarSupportedRenderers *YouModNewTab(NSString *pivotID, NSString *
         tab.pivotBarIconOnlyItemRenderer.pivotIdentifier = pivotID;
         tab.pivotBarIconOnlyItemRenderer.navigationEndpoint.browseEndpoint.browseId = pivotID;
         tab.pivotBarIconOnlyItemRenderer.icon.iconType = it;
-        tab.pivotBarIconOnlyItemRenderer.backgroundStyle = 1;
+        if ([tab.pivotBarIconOnlyItemRenderer respondsToSelector:@selector(setBackgroundStyle:)]) tab.pivotBarIconOnlyItemRenderer.backgroundStyle = 1; // absent on older builds
     } else {
         tab.pivotBarItemRenderer.pivotIdentifier = pivotID;
         tab.pivotBarItemRenderer.navigationEndpoint.browseEndpoint.browseId = pivotID;
@@ -329,17 +329,32 @@ static BOOL isGestureRegistered = NO;
 %end
 
 // Startup Tab
+static BOOL ymShowLibraryForItem(YTPivotBarViewController *pivotBar, id item) {
+    if (![[item pivotIdentifier] isEqualToString:kYMLibraryPivotIdentifier]) return NO;
+    [pivotBar cacheCurrentViewControllers];
+    [pivotBar updateViewsWithSelectedPivotIdentifier:kYMLibraryPivotIdentifier];
+    UIViewController *libraryVC = YouModDownloadLibraryViewController(pivotBar);
+    [[pivotBar delegate] didTapPivotBarItem:item withViewControllers:@[libraryVC] animated:YES];
+    return YES;
+}
+
 static BOOL isTabSelected = NO;
 %hook YTPivotBarViewController
 - (void)selectItemWithPivotBarItem:(id)item {
-    if ([[item pivotIdentifier] isEqualToString:kYMLibraryPivotIdentifier]) {
-        [self cacheCurrentViewControllers];
-        [self updateViewsWithSelectedPivotIdentifier:kYMLibraryPivotIdentifier];
-        UIViewController *libraryVC = YouModDownloadLibraryViewController(self);
-        [[self delegate] didTapPivotBarItem:item withViewControllers:@[libraryVC] animated:YES];
-        return;
-    }
+    if (ymShowLibraryForItem(self, item)) return;
     %orig(item);
+}
+- (void)selectItemWithPivotRenderer:(id)item {
+    if (ymShowLibraryForItem(self, item)) return;
+    %orig(item);
+}
+- (void)didTapItemWithIconOnlyItemRenderer:(id)renderer {
+    if ([[renderer pivotIdentifier] isEqualToString:kYMLibraryPivotIdentifier]) {
+        YTIPivotBarItemRenderer *item = [%c(YTIPivotBarItemRenderer) new];
+        item.pivotIdentifier = kYMLibraryPivotIdentifier;
+        if (ymShowLibraryForItem(self, item)) return;
+    }
+    %orig(renderer);
 }
 // Startup-tab support: the Download tab has no native browse destination, so when the
 // saved Default Tab resolves to it, present the download library exactly like a real

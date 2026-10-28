@@ -157,6 +157,12 @@ void YouModRequestPhotoAccess(void (^completion)(BOOL granted)) {
     }];
 }
 
+static NSString *YMDuplicateSuffix(NSString *fileName) {
+    NSString *base = YouModSanitizedFileName(fileName);
+    NSRange range = [base rangeOfString:@" \\[[A-Za-z0-9_-]{11}\\]$" options:NSRegularExpressionSearch];
+    return range.location == NSNotFound ? nil : [base substringFromIndex:range.location];
+}
+
 void YouModSaveVideoToPhotos(NSURL *fileURL, UIViewController *presenter, void (^completion)(BOOL success, NSError *error)) {
     YouModRequestPhotoAccess(^(BOOL granted) {
         if (!granted) {
@@ -199,6 +205,8 @@ void YouModHandlePostDownloadFile(NSURL *fileURL, BOOL isVideo, YMDownloadDestin
     if (wantsPhotos) {
         YouModSaveVideoToPhotos(fileURL, presenter, ^(BOOL success, NSError *error) {
             if (success) {
+                // Keep only the Photos copy; otherwise it also shows up in the download library.
+                [[NSFileManager defaultManager] removeItemAtURL:fileURL error:nil];
                 YouModSendSuccess(LOC(@"SAVED_TO_PHOTOS"));
             } else {
                 YouModSendError(error.localizedDescription ?: LOC(@"CANNOT_SAVE_TO_PHOTOS"));
@@ -305,8 +313,9 @@ static void YMDownloadMuxAndFinish(NSURL *videoURL, NSArray<NSURL *> *audioURLs,
             for (NSURL *url in temporaries) {
                 [[NSFileManager defaultManager] removeItemAtURL:url error:nil];
             }
-            if (video) YMSaveThumbnailAlongsideVideo(thumbnailURL, output);
-            YMRecordLibraryDownloadType(output, isShorts && video != nil);
+            BOOL toPhotos = destination == YMDownloadDestinationPhotos && video && YouModFileIsPhotosCompatible(output);
+            if (video && !toPhotos) YMSaveThumbnailAlongsideVideo(thumbnailURL, output);
+            if (!toPhotos) YMRecordLibraryDownloadType(output, isShorts && video != nil);
             dispatch_async(dispatch_get_main_queue(), ^{
                 gYMDownloadBusy = NO;
                 [gYMDownloadProgressView dismiss];
@@ -317,6 +326,21 @@ static void YMDownloadMuxAndFinish(NSURL *videoURL, NSArray<NSURL *> *audioURLs,
             YMDownloadFail(failure ?: LOC(@"DOWNLOAD_FAILED"), temporaries);
         }
     });
+}
+
+static NSArray<NSURL *> *YMExistingDownloadsForFileName(NSString *fileName) {
+    NSString *suffix = YMDuplicateSuffix(fileName);
+    if (!suffix) return @[];
+    NSSet<NSString *> *exts = [NSSet setWithObjects:@"mp4", @"mkv", @"m4a", @"mka", nil];
+    NSMutableArray<NSURL *> *matches = [NSMutableArray array];
+    for (NSURL *url in [[NSFileManager defaultManager] contentsOfDirectoryAtURL:YouModDownloadsDirectoryURL()
+                                                     includingPropertiesForKeys:nil
+                                                                        options:NSDirectoryEnumerationSkipsHiddenFiles
+                                                                          error:nil]) {
+        if ([exts containsObject:url.pathExtension.lowercaseString] &&
+            [url.lastPathComponent.stringByDeletingPathExtension hasSuffix:suffix]) [matches addObject:url];
+    }
+    return matches;
 }
 
 void YMDownloadStart(YMFormat *video, NSArray<YMFormat *> *audioTracks, NSArray<YMCaptionTrack *> *captions,
@@ -333,6 +357,22 @@ void YMDownloadStart(YMFormat *video, NSArray<YMFormat *> *audioTracks, NSArray<
     if (!YMFFmpegIsAvailable()) {
         YouModSendError(unavailable ?: LOC(@"DOWNLOAD_FAILED"));
         return;
+    }
+    if (destination == YMDownloadDestinationFiles) {
+        NSArray<NSURL *> *existing = YMExistingDownloadsForFileName(fileName);
+        if (existing.count > 0) {
+            YTAlertView *alert = [%c(YTAlertView) confirmationDialogWithAction:^{
+                for (NSURL *url in existing) {
+                    [[NSFileManager defaultManager] removeItemAtURL:url error:nil];
+                    [[NSFileManager defaultManager] removeItemAtURL:[[url URLByDeletingPathExtension] URLByAppendingPathExtension:@"jpg"] error:nil];
+                }
+                YMDownloadStart(video, audioTracks, captions, fileName, destination, thumbnailURL, isShorts, presenter);
+            } actionTitle:LOC(@"DUPLICATE_DOWNLOAD_REPLACE") cancelTitle:LOC(@"CANCEL")];
+            alert.title = LOC(@"DUPLICATE_DOWNLOAD_TITLE");
+            alert.subtitle = LOC(@"DUPLICATE_DOWNLOAD_MESSAGE");
+            [alert show];
+            return;
+        }
     }
     gYMDownloadBusy = YES;
     gYMDownloadMeter = [YMProgressMeter new];

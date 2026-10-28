@@ -466,6 +466,7 @@ typedef NS_ENUM(NSUInteger, GestureSection) {
 @interface YTPivotBarViewController : UIViewController
 - (void)selectItemWithPivotIdentifier:(id)pivotIndentifier;
 - (void)selectItemWithPivotBarItem:(id)item;
+- (void)selectItemWithPivotRenderer:(id)item;
 - (void)cacheCurrentViewControllers;
 - (void)updateViewsWithSelectedPivotIdentifier:(id)pivotIdentifier;
 - (id)delegate;
@@ -651,6 +652,9 @@ typedef NS_ENUM(NSUInteger, GestureSection) {
 
 @interface UIKBVisualEffectView : UIVisualEffectView
 @property (nonatomic, copy, readwrite) NSArray *backgroundEffects;
+@end
+
+@interface UIKBInputBackdropView : UIView
 @end
 
 @interface YTAppDelegate : UIResponder
